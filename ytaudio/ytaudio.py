@@ -1,25 +1,21 @@
 import asyncio
 import logging
-import os
 import random
-import sys
 from collections import Counter
-from pathlib import Path
 from typing import Dict, Optional, Union
 
 import aiohttp
 import discord
-from discord import voice_client as dpy_voice_client, voice_state as dpy_voice_state
 from redbot.core import Config, commands
 from redbot.core.data_manager import cog_data_path
 from redbot.core.utils.chat_formatting import box, pagify
 from redbot.core.utils.menus import menu
 
+from .deps import Deps
 from .player import GuildPlayer, fmt_time
-from .sources import SPOTIFY_RE, YTDL, ExtractError, Spotify, Track, detect_js_runtime
+from .sources import SPOTIFY_RE, YTDL, ExtractError, Spotify, Track
 
 log = logging.getLogger("red.ytaudio")
-BIN_DIR = "Scripts" if os.name == "nt" else "bin"
 
 
 class Feedback(Exception):
@@ -42,30 +38,25 @@ class YTAudio(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=0x79746175646F, force_registration=True)
-        self.config.register_global(ytdlp_path=None, js_runtime=None, auto_update=True)
+        self.config.register_global(ytdlp_path=None, js_runtime=None, auto_update=True, last_update=0.0)
         self.config.register_guild(
             volume=100, max_volume=150, repeat=False, shuffle=False, autoplay=False, notify=True,
             dj_enabled=False, dj_role=None, vote_percent=0, empty_dc=300, dc_at_end=False, maxlength=0,
             playlists={},
         )
         self.players: Dict[int, GuildPlayer] = {}
-        self.venv = cog_data_path(self) / "ytdlp-venv"
-        self.default_ytdlp = str(self.venv / BIN_DIR / "yt-dlp")
-        self.ytdl = YTDL(self.default_ytdlp, detect_js_runtime())
+        self.deps = Deps(self, cog_data_path(self))
+        self.ytdl = YTDL(self.deps)
         self.spotify = Spotify(bot)
         self.session = aiohttp.ClientSession()
-        self._update_task: Optional[asyncio.Task] = None
+        self._deps_task: Optional[asyncio.Task] = None
 
     async def cog_load(self):
-        g = await self.config.all()
-        self.ytdl.binary = g["ytdlp_path"] or self.default_ytdlp
-        if g["js_runtime"] is not None:
-            self.ytdl.js_runtime = g["js_runtime"] or None
-        self._update_task = asyncio.create_task(self._update_loop())
+        self._deps_task = asyncio.create_task(self.deps.loop())
 
     async def cog_unload(self):
-        if self._update_task:
-            self._update_task.cancel()
+        if self._deps_task:
+            self._deps_task.cancel()
         for player in list(self.players.values()):
             try:
                 await player.destroy()
@@ -85,39 +76,20 @@ class YTAudio(commands.Cog):
         else:
             await self.bot.on_command_error(ctx, error, unhandled_by_cog=True)
 
-    async def _update_loop(self):
-        if not Path(self.ytdl.binary).exists() and self.ytdl.binary == self.default_ytdlp:
-            log.info("Installing yt-dlp into %s", self.venv)
-            try:
-                proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "venv", str(self.venv))
-                await proc.wait()
-                log.info("yt-dlp install: %s", await self.update_ytdlp())
-            except Exception:
-                log.exception("Installing yt-dlp failed")
-        self.ytdl.ready.set()
-        while True:
-            await asyncio.sleep(24 * 3600)
-            if await self.config.auto_update():
-                try:
-                    log.info("yt-dlp update: %s", await self.update_ytdlp())
-                except Exception:
-                    log.exception("yt-dlp auto-update failed")
-
-    async def update_ytdlp(self) -> str:
-        pip = Path(self.ytdl.binary).with_name("pip")
-        if not pip.exists():
-            return f"No pip next to {self.ytdl.binary}, update it manually."
-        before = await self.ytdl.version() if Path(self.ytdl.binary).exists() else "not installed"
-
-        proc = await asyncio.create_subprocess_exec(
-            str(pip), "install", "-q", "-U", "--pre", "yt-dlp[default]",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-        out, _ = await proc.communicate()
-        if proc.returncode:
-            return f"pip failed: {out.decode()[-500:]}"
-        after = await self.ytdl.version()
-        return f"{before} -> {after}" if before != after else f"already up to date ({after})"
+    async def require(self, ctx: commands.Context):
+        deps = self.deps
+        if deps.ready.is_set() and not deps.blocking() and not deps.lock.locked():
+            return
+        notice = await ctx.send("Setting up music support, one moment. I'll continue automatically.")
+        async with ctx.typing():
+            await deps.recheck()
+        try:
+            await notice.delete()
+        except discord.HTTPException:
+            pass
+        if blocking := deps.blocking():
+            raise Feedback("Music isn't available right now:\n" + "\n".join(f"- {p}" for p in blocking.values())
+                           + "\nThe bot owner has been notified.")
 
     def get_player(self, guild: discord.Guild) -> GuildPlayer:
         if guild.id not in self.players:
@@ -134,11 +106,10 @@ class YTAudio(commands.Cog):
         return any(r.id == settings["dj_role"] for r in member.roles)
 
     async def connect(self, ctx: commands.Context) -> GuildPlayer:
-        if not (dpy_voice_client.has_nacl and dpy_voice_state.has_dave):
-            raise Feedback("Voice libraries (PyNaCl, davey) are missing or were just installed. Restart the bot once.")
         voice = ctx.author.voice
         if not voice or not voice.channel:
             raise Feedback("Join a voice channel first.")
+        await self.require(ctx)
         vc = ctx.guild.voice_client
         player = self.get_player(ctx.guild)
         if vc is None:
@@ -287,6 +258,7 @@ class YTAudio(commands.Cog):
         """Search YouTube and pick a result. Start the query with `sc ` to search SoundCloud."""
         if not await self.is_dj(ctx):
             raise Feedback("You need the DJ role to queue tracks.")
+        await self.require(ctx)
         async with ctx.typing():
             results = await self.ytdl.search(query, 10, ctx.author.id)
         if not results:
@@ -420,9 +392,7 @@ class YTAudio(commands.Cog):
         vol = max(0, min(vol, await self.config.guild(ctx.guild).max_volume()))
         await self.config.guild(ctx.guild).volume.set(vol)
         if player:
-            player.volume = vol
-            if player.vc and isinstance(player.vc.source, discord.PCMVolumeTransformer):
-                player.vc.source.volume = vol / 100
+            await player.set_volume(vol)
         await ctx.send(f"Volume set to {vol}%.")
 
     @commands.command()
@@ -679,8 +649,7 @@ class YTAudio(commands.Cog):
             f"Volume / max:     {s['volume']}% / {s['max_volume']}%\n"
             f"Repeat/Shuffle/Autoplay: {s['repeat']}/{s['shuffle']}/{s['autoplay']}\n"
             f"Playlists:        {len(s['playlists'])}\n\n"
-            f"yt-dlp:           {await self.ytdl.version()} ({self.ytdl.binary})\n"
-            f"JS runtime:       {self.ytdl.js_runtime or 'none'}\n"
+            f"{self.deps.status()}\n"
             f"Auto-update:      {g['auto_update']}"
         )
         await ctx.send(box(text, lang="yaml"))
@@ -745,9 +714,10 @@ class YTAudio(commands.Cog):
 
     @as_ytdlp.command(name="update")
     async def ytdlp_update(self, ctx: commands.Context):
-        """Update yt-dlp to the latest nightly now."""
+        """Update yt-dlp and check all dependencies now."""
         async with ctx.typing():
-            await ctx.send(f"yt-dlp: {await self.update_ytdlp()}")
+            await self.deps.ensure(update=True)
+        await ctx.send(box(self.deps.status()))
 
     @as_ytdlp.command(name="autoupdate")
     async def ytdlp_autoupdate(self, ctx: commands.Context):
@@ -758,19 +728,19 @@ class YTAudio(commands.Cog):
 
     @as_ytdlp.command(name="path")
     async def ytdlp_path(self, ctx: commands.Context, path: Optional[str] = None):
-        """Set the yt-dlp executable (no argument resets to the bundled venv)."""
+        """Use another yt-dlp executable (no argument goes back to the built-in one)."""
         await self.config.ytdlp_path.set(path)
-        self.ytdl.binary = path or self.default_ytdlp
-        await ctx.send(f"yt-dlp: `{self.ytdl.binary}` ({await self.ytdl.version()})")
+        async with ctx.typing():
+            await self.deps.ensure()
+        await ctx.send(box(self.deps.status()))
 
     @as_ytdlp.command(name="jsruntime")
     async def ytdlp_js(self, ctx: commands.Context, runtime: Optional[str] = None):
-        """Set yt-dlp's JS runtime, e.g. `deno:/usr/bin/deno` or `node:/path/node`; `none` disables, no argument auto-detects."""
+        """Set yt-dlp's JS runtime, e.g. `deno:/usr/bin/deno`; `none` disables, no argument picks one automatically."""
         if runtime is None:
             await self.config.js_runtime.clear()
-            self.ytdl.js_runtime = detect_js_runtime()
         else:
-            value = "" if runtime.lower() == "none" else runtime
-            await self.config.js_runtime.set(value)
-            self.ytdl.js_runtime = value or None
-        await ctx.send(f"JS runtime: `{self.ytdl.js_runtime or 'none'}`")
+            await self.config.js_runtime.set("" if runtime.lower() == "none" else runtime)
+        async with ctx.typing():
+            await self.deps.ensure()
+        await ctx.send(box(self.deps.status()))

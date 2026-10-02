@@ -1,7 +1,9 @@
 {
-    "author": ["FreshImmuc"],
+    "author": [
+        "FreshImmuc"
+    ],
     "name": "ytdl-audio-redbot",
     "short": "Music for Red powered by yt-dlp instead of Lavalink.",
     "description": "Cogs for Red-DiscordBot. ytaudio plays YouTube, SoundCloud and Spotify links through yt-dlp and FFmpeg.",
-    "install_msg": "Thanks for installing! Unload Red's Audio cog first (`[p]unload audio`), then `[p]load ytaudio`. If voice libraries were installed just now, restart the bot once."
+    "install_msg": "Run `[p]unload audio` and `[p]load ytaudio`. Setup runs by itself, the bot owner gets a DM when it's ready."
 }

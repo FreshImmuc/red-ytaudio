@@ -3,14 +3,13 @@
 Music cog for Red-DiscordBot. Uses yt-dlp instead of Lavalink.
 
 ## Install
-Requires FFmpeg.
 ```
 [p]repo add ytdl-audio <repo url>
 [p]cog install ytdl-audio ytaudio
 [p]unload audio
 [p]load ytaudio
 ```
-Restart the bot once after the first install. On first load yt-dlp installs itself (takes a minute).
+Everything else installs itself on first load: yt-dlp, deno, voice libraries, and FFmpeg if the system has none. The bot owner gets a DM when it's done or if something needs fixing.
 
 To go back to Red's Audio: `[p]unload ytaudio`, `[p]load audio`.
 
@@ -80,7 +79,7 @@ audioset notify                  "Now Playing" messages on/off
 
 Bot owner:
 ```
-audioset ytdlp update            update yt-dlp now
+audioset ytdlp update            update and recheck everything now
 audioset ytdlp autoupdate        daily update on/off (default on)
 audioset ytdlp jsruntime [x]     e.g. deno:/usr/bin/deno, empty = auto
 audioset ytdlp path [x]          use another yt-dlp, empty = built-in
@@ -88,7 +87,8 @@ audiostats                       where the bot is playing
 ```
 
 ## Notes
-- yt-dlp lives in the cog's data folder and updates itself daily. No restart needed.
-- YouTube needs a JS runtime for yt-dlp. deno, node or bun is found automatically.
+- yt-dlp and deno live in the cog's data folder and update daily. No restart needed.
+- If something is missing, the cog retries every 15 minutes and on every music command. Fixes are picked up automatically.
+- `audioset settings` shows what's installed.
 - The next track is loaded in the background, so skipping is instant.
 - Spotify API keys (`[p]set api spotify`) are used if they work, otherwise none are needed.

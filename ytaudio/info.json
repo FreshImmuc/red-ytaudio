@@ -1,13 +1,28 @@
 {
-    "author": ["FreshImmuc"],
+    "author": [
+        "FreshImmuc"
+    ],
     "name": "YTAudio",
     "short": "Music via yt-dlp: YouTube, Spotify links, SoundCloud and more.",
     "description": "Replacement for Red's Audio cog that plays through yt-dlp and FFmpeg instead of Lavalink. yt-dlp is installed into the cog's data folder on first load and updated daily.",
-    "install_msg": "Unload Red's Audio cog first (`[p]unload audio`), then `[p]load ytaudio`. Needs FFmpeg on the host. If PyNaCl/davey were installed just now, restart the bot once. yt-dlp installs itself on first load (takes about a minute).",
-    "requirements": ["PyNaCl>=1.5,<1.6", "davey>=0.1.0"],
-    "tags": ["music", "audio", "youtube", "spotify", "yt-dlp"],
+    "install_msg": "Run `[p]unload audio` and `[p]load ytaudio`. Setup runs by itself, the bot owner gets a DM when it's ready.",
+    "requirements": [
+        "PyNaCl>=1.5,<1.6",
+        "davey>=0.1.0"
+    ],
+    "tags": [
+        "music",
+        "audio",
+        "youtube",
+        "spotify",
+        "yt-dlp"
+    ],
     "min_bot_version": "3.5.0",
-    "min_python_version": [3, 9, 0],
+    "min_python_version": [
+        3,
+        9,
+        0
+    ],
     "type": "COG",
     "end_user_data_statement": "This cog stores server music settings and saved playlists, including the user ID of each playlist's creator."
 }

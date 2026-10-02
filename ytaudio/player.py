@@ -111,6 +111,14 @@ class GuildPlayer:
             if not await self._start(track, max(0.0, seconds), stream):
                 await self._advance()
 
+    async def set_volume(self, volume: int):
+        self.volume = volume
+        vc = self.vc
+        if vc and isinstance(vc.source, discord.PCMVolumeTransformer):
+            vc.source.volume = volume / 100
+        elif self.current and self.current.duration and vc and (vc.is_playing() or vc.is_paused()):
+            await self.seek(self.position)
+
     async def stop(self):
         async with self._lock:
             self.queue.clear()
@@ -250,9 +258,23 @@ class GuildPlayer:
             before += " -headers " + shlex.quote("".join(f"{k}: {v}\r\n" for k, v in headers.items()))
         if offset:
             before += f" -ss {offset:.1f}"
-        source = discord.PCMVolumeTransformer(
-            discord.FFmpegPCMAudio(url, before_options=before, options="-vn"), volume=self.volume / 100
-        )
+        ffmpeg = self.cog.deps.ffmpeg or "ffmpeg"
+        try:
+            if self.cog.deps.opus_available():
+                source = discord.PCMVolumeTransformer(
+                    discord.FFmpegPCMAudio(url, executable=ffmpeg, before_options=before, options="-vn"),
+                    volume=self.volume / 100,
+                )
+            else:
+                source = discord.FFmpegOpusAudio(
+                    url, executable=ffmpeg, before_options=before, options=f"-vn -filter:a volume={self.volume / 100:.2f}"
+                )
+        except (discord.ClientException, OSError) as e:
+            log.warning("FFmpeg failed to start: %s", e)
+            if not quiet:
+                await self.send(f"Couldn't start FFmpeg: {e}")
+            asyncio.create_task(self.cog.deps.ensure())
+            return False
         self._gen += 1
         gen = self._gen
         self.current, self.votes = track, set()

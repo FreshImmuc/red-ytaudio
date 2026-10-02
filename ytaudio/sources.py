@@ -2,12 +2,11 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
-import shutil
 import time
 import urllib.parse
 from dataclasses import asdict, dataclass, fields
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 import aiohttp
@@ -59,16 +58,6 @@ class Track:
         return cls(**{k: v for k, v in d.items() if k in names}, requester=requester)
 
 
-def detect_js_runtime() -> Optional[str]:
-    for name in ("deno", "node", "bun"):
-        if path := shutil.which(name):
-            return f"{name}:{path}"
-    for path in (Path.home() / ".deno/bin/deno", Path.home() / ".local/share/pnpm/node"):
-        if path.exists():
-            return f"{path.name}:{path}"
-    return None
-
-
 def _norm(text: Optional[str]) -> str:
     return re.sub(r"[\W_]+", "", (text or "").casefold())
 
@@ -85,22 +74,26 @@ def _entry_to_track(e: dict, requester: int) -> Optional[Track]:
 
 
 class YTDL:
-    def __init__(self, binary: str, js_runtime: Optional[str]):
-        self.binary = binary
-        self.js_runtime = js_runtime
-        self.ready = asyncio.Event()
+    def __init__(self, deps):
+        self.deps = deps
 
     async def run(self, *args: str, timeout: float = 90) -> dict:
         try:
-            await asyncio.wait_for(self.ready.wait(), 180)
+            await asyncio.wait_for(self.deps.ready.wait(), 300)
         except asyncio.TimeoutError:
             raise ExtractError("yt-dlp is still being installed, try again in a minute.")
-        cmd = [self.binary, "-J", "--ignore-config", "--no-warnings"]
-        if self.js_runtime:
-            cmd += ["--js-runtimes", self.js_runtime]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
+        if problem := self.deps.problems.get("yt-dlp") or self.deps.problems.get("python"):
+            raise ExtractError(problem)
+        cmd = [*self.deps.ytdlp_cmd, "-J", "--ignore-config", "--no-warnings"]
+        if self.deps.js:
+            cmd += ["--js-runtimes", self.deps.js]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, **self.deps.env} if self.deps.env else None,
+            )
+        except OSError as e:
+            raise ExtractError(f"Couldn't start yt-dlp: {e}")
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout)
         except asyncio.TimeoutError:
@@ -111,14 +104,6 @@ class YTDL:
             log.warning("yt-dlp failed for %s: %s", args[-1], lines[-1])
             raise ExtractError(lines[-1].replace("ERROR: ", "")[:300])
         return json.loads(out)
-
-    async def version(self) -> str:
-        try:
-            proc = await asyncio.create_subprocess_exec(self.binary, "--version", stdout=asyncio.subprocess.PIPE)
-        except OSError:
-            return "not installed"
-        out, _ = await proc.communicate()
-        return out.decode().strip()
 
     async def search(self, query: str, limit: int = 10, requester: int = 0) -> List[Track]:
         prefix = "ytsearch"

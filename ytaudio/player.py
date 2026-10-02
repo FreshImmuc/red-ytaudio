@@ -47,6 +47,9 @@ class GuildPlayer:
         self._prefetch_task: Optional[asyncio.Task] = None
         self._autoplay_next: Optional[Track] = None
         self._shuffle_pick: Optional[Track] = None
+        self.np_message: Optional[discord.Message] = None
+        self.np_track: Optional[Track] = None
+        self._np_rendered: Optional[dict] = None
 
     @property
     def vc(self) -> Optional[discord.VoiceClient]:
@@ -73,12 +76,52 @@ class GuildPlayer:
             self._started += time.monotonic() - (self._paused_at or time.monotonic())
             self._paused_at = None
 
-    async def send(self, content=None, **kwargs):
+    async def send(self, content=None, **kwargs) -> Optional[discord.Message]:
         if self.text_channel:
             try:
-                await self.text_channel.send(content, **kwargs)
+                return await self.text_channel.send(content, **kwargs)
             except discord.HTTPException:
                 pass
+        return None
+
+    async def replace_np(self, message: discord.Message):
+        old, old_track = self.np_message, self.np_track
+        self.np_message, self.np_track, self._np_rendered = message, self.current, None
+        if not old or old.id == message.id:
+            return
+        try:
+            if old_track is self.current:
+                await old.delete()
+            else:
+                await old.edit(embed=await self.cog.played_embed(self, old_track))
+        except discord.HTTPException:
+            pass
+
+    async def finish_np(self):
+        message, track = self.np_message, self.np_track
+        self.np_message = self.np_track = None
+        if message and track:
+            try:
+                await message.edit(embed=await self.cog.played_embed(self, track))
+            except discord.HTTPException:
+                pass
+
+    async def refresh_np(self) -> bool:
+        message = self.np_message
+        if not message or not self.current or self.np_track is not self.current:
+            return False
+        embed = await self.cog.now_embed(self)
+        rendered = embed.to_dict()
+        if rendered == self._np_rendered:
+            return False
+        try:
+            await message.edit(embed=embed)
+            self._np_rendered = rendered
+        except (discord.NotFound, discord.Forbidden):
+            self.np_message = None
+        except discord.HTTPException:
+            pass
+        return True
 
     async def start_if_idle(self):
         async with self._lock:
@@ -124,6 +167,7 @@ class GuildPlayer:
             self.queue.clear()
             self._halt()
             self._cache = self._inflight = self._autoplay_next = self._shuffle_pick = None
+            await self.finish_np()
 
     async def destroy(self):
         await self.stop()
@@ -165,6 +209,7 @@ class GuildPlayer:
             elif settings["autoplay"] and (track := self._autoplay_next or await self._autoplay_track()):
                 self._autoplay_next = None
             else:
+                await self.finish_np()
                 await self.send("Queue ended.")
                 if settings["dc_at_end"]:
                     await self.vc.disconnect(force=True)
@@ -284,6 +329,10 @@ class GuildPlayer:
             self._shuffle_pick = None
         vc.play(source, after=lambda e: self._after(gen, e))
         self.schedule_prefetch()
-        if not offset and await self.cog.config.guild(self.guild).notify():
-            await self.send(embed=await self.cog.now_embed(self, title="Now Playing"))
+        if not offset:
+            if await self.cog.config.guild(self.guild).notify():
+                if message := await self.send(embed=await self.cog.now_embed(self)):
+                    await self.replace_np(message)
+            elif self.np_message:
+                await self.finish_np()
         return True

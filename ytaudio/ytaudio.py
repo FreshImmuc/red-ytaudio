@@ -16,6 +16,7 @@ from .player import GuildPlayer, fmt_time
 from .sources import SPOTIFY_RE, YTDL, ExtractError, Spotify, Track
 
 log = logging.getLogger("red.ytaudio")
+NP_EDITS_PER_SECOND = 4
 
 
 class Feedback(Exception):
@@ -50,13 +51,16 @@ class YTAudio(commands.Cog):
         self.spotify = Spotify(bot)
         self.session = aiohttp.ClientSession()
         self._deps_task: Optional[asyncio.Task] = None
+        self._np_task: Optional[asyncio.Task] = None
 
     async def cog_load(self):
         self._deps_task = asyncio.create_task(self.deps.loop())
+        self._np_task = asyncio.create_task(self._np_loop())
 
     async def cog_unload(self):
-        if self._deps_task:
-            self._deps_task.cancel()
+        for task in (self._deps_task, self._np_task):
+            if task:
+                task.cancel()
         for player in list(self.players.values()):
             try:
                 await player.destroy()
@@ -180,6 +184,27 @@ class YTAudio(commands.Cog):
                 description=f"{track_line(tracks[0])}\nPosition in queue: {pos}"))
         await player.start_if_idle()
 
+    async def _np_loop(self):
+        while True:
+            started = asyncio.get_running_loop().time()
+            for player in list(self.players.values()):
+                try:
+                    slot = asyncio.get_running_loop().time()
+                    if await player.refresh_np():
+                        await asyncio.sleep(max(0.0, 1 / NP_EDITS_PER_SECOND - (asyncio.get_running_loop().time() - slot)))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("Now Playing update failed in %s", player.guild.id)
+            await asyncio.sleep(max(0.0, 1.0 - (asyncio.get_running_loop().time() - started)))
+
+    async def played_embed(self, player: GuildPlayer, track: Track) -> discord.Embed:
+        colour = await self.bot.get_embed_colour(player.text_channel) if player.text_channel else discord.Colour.red()
+        embed = discord.Embed(colour=colour, title="Played", description=track_line(track))
+        if track.thumbnail:
+            embed.set_thumbnail(url=track.thumbnail)
+        return embed
+
     async def now_embed(self, player: GuildPlayer, title="Now Playing") -> discord.Embed:
         t = player.current
         colour = await self.bot.get_embed_colour(player.text_channel) if player.text_channel else discord.Colour.red()
@@ -293,7 +318,7 @@ class YTAudio(commands.Cog):
         player = self.players.get(ctx.guild.id)
         if not player or not player.current:
             raise Feedback("Nothing playing.")
-        await ctx.send(embed=await self.now_embed(player))
+        await player.replace_np(await ctx.send(embed=await self.now_embed(player)))
 
     @commands.command()
     async def pause(self, ctx: commands.Context):

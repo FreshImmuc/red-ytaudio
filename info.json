@@ -5,5 +5,5 @@
     "name": "red-ytaudio",
     "short": "Music for Red powered by yt-dlp instead of Lavalink.",
     "description": "Cogs for Red-DiscordBot. ytaudio plays YouTube, SoundCloud and Spotify links through yt-dlp and FFmpeg.",
-    "install_msg": "ytaudio uses the same commands as Red's built-in Audio cog (play, skip, queue...), so both can't be loaded at once. If Audio is loaded, run `[p]unload audio` first, then `[p]load ytaudio`. Your Audio settings are kept, `[p]load audio` brings it back anytime. Setup runs by itself on first load, the bot owner gets a DM when it's ready."
+    "install_msg": "Repo added. Next, install the music cog with `[p]cog install red-ytaudio ytaudio`. After that you'll get the steps to switch from Red's Audio cog."
 }

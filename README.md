@@ -50,7 +50,7 @@ percent               who queued how much
 
 Good to know:
 - The next song is loaded while the current one plays, so skipping is instant.
-- The "Now Playing" message updates live every second. With many servers playing at once it slows down a bit to stay within Discord's limits.
+- The "Now Playing" message updates live every 2 seconds. With many servers playing at once it slows down a bit to stay within Discord's limits.
 - If 3 songs in a row can't be played, the bot stops and clears the queue.
 - On first use after installing, the bot says it's setting up and then plays your song by itself.
 

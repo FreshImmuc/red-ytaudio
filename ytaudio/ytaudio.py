@@ -17,6 +17,7 @@ from .sources import SPOTIFY_RE, YTDL, ExtractError, Spotify, Track
 
 log = logging.getLogger("red.ytaudio")
 NP_EDITS_PER_SECOND = 4
+NP_INTERVAL = 2.0
 
 
 class Feedback(Exception):
@@ -196,7 +197,7 @@ class YTAudio(commands.Cog):
                     raise
                 except Exception:
                     log.exception("Now Playing update failed in %s", player.guild.id)
-            await asyncio.sleep(max(0.0, 1.0 - (asyncio.get_running_loop().time() - started)))
+            await asyncio.sleep(max(0.0, NP_INTERVAL - (asyncio.get_running_loop().time() - started)))
 
     async def played_embed(self, player: GuildPlayer, track: Track) -> discord.Embed:
         colour = await self.bot.get_embed_colour(player.text_channel) if player.text_channel else discord.Colour.red()

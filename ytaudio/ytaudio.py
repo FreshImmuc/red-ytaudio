@@ -170,7 +170,14 @@ class YTAudio(commands.Cog):
 
     async def resolve(self, query: str, requester: int):
         if m := SPOTIFY_RE.search(query):
-            return await self.spotify.load(self.session, m.group(1), m.group(2), requester)
+            tracks, title = await self.spotify.load(self.session, m.group(1), m.group(2), requester)
+            if m.group(1) == "album" and tracks and title:
+                try:
+                    if album := await self.ytdl.ytm_album(title, tracks[0].author.split(", ")[0], requester):
+                        return album, title
+                except ExtractError:
+                    pass
+            return tracks, title
         return await self.ytdl.load(query, requester)
 
     async def enqueue(self, ctx: commands.Context, player: GuildPlayer, tracks, title, bump=False):
@@ -184,8 +191,10 @@ class YTAudio(commands.Cog):
         was_busy = player.current is not None
         if bump:
             player.queue[0:0] = tracks
+            player._shuffle_pick = tracks[0]
         else:
             player.queue.extend(tracks)
+        player.schedule_prefetch()
         if title:
             await ctx.send(embed=discord.Embed(
                 colour=await ctx.embed_colour(), title="Playlist Enqueued",
@@ -301,6 +310,7 @@ class YTAudio(commands.Cog):
         player = self.players.get(ctx.guild.id)
         if on and player and ctx.guild.voice_client:
             await player.start_if_idle()
+            player.schedule_prefetch()
 
     @commands.command(aliases=["np"])
     async def now(self, ctx: commands.Context):
@@ -427,6 +437,8 @@ class YTAudio(commands.Cog):
         on = not await self.config.guild(ctx.guild).shuffle()
         await self.config.guild(ctx.guild).shuffle.set(on)
         await ctx.send(f"Shuffle {'enabled' if on else 'disabled'}.")
+        if player := self.players.get(ctx.guild.id):
+            player.schedule_prefetch()
 
     @commands.command()
     async def remove(self, ctx: commands.Context, index_or_user: Union[int, discord.Member]):
@@ -436,9 +448,11 @@ class YTAudio(commands.Cog):
             if not 1 <= index_or_user <= len(player.queue):
                 raise Feedback("No track at that position.")
             t = player.queue.pop(index_or_user - 1)
+            player.schedule_prefetch()
             return await ctx.send(f"Removed **{esc(t.title)}**.")
         before = len(player.queue)
         player.queue = [t for t in player.queue if t.requester != index_or_user.id]
+        player.schedule_prefetch()
         await ctx.send(f"Removed {before - len(player.queue)} tracks queued by {esc(index_or_user.display_name)}.")
 
     @commands.command()
@@ -448,6 +462,8 @@ class YTAudio(commands.Cog):
         if not 1 <= index <= len(player.queue):
             raise Feedback("No track at that position.")
         player.queue.insert(0, player.queue.pop(index - 1))
+        player._shuffle_pick = player.queue[0]
+        player.schedule_prefetch()
         await ctx.send(f"Moved **{esc(player.queue[0].title)}** to the front.")
 
     @commands.command()
@@ -520,7 +536,9 @@ class YTAudio(commands.Cog):
     @queue.command(name="shuffle")
     async def queue_shuffle(self, ctx: commands.Context):
         """Shuffle the queue once."""
-        random.shuffle((await self.control(ctx)).queue)
+        player = await self.control(ctx)
+        random.shuffle(player.queue)
+        player.schedule_prefetch()
         await ctx.send("Queue shuffled.")
 
     async def _playlist(self, ctx, name: str, *, owner_only=False) -> dict:

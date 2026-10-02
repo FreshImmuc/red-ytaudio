@@ -4,7 +4,7 @@ import random
 import shlex
 import time
 from collections import deque
-from typing import TYPE_CHECKING, Deque, List, Optional
+from typing import TYPE_CHECKING, Deque, List, Optional, Tuple
 
 import discord
 
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .ytaudio import YTAudio
 
 log = logging.getLogger("red.ytaudio")
+STREAM_TTL = 3 * 3600
 
 
 def fmt_time(seconds: Optional[float]) -> str:
@@ -40,6 +41,12 @@ class GuildPlayer:
         self._started = 0.0
         self._offset = 0.0
         self._paused_at: Optional[float] = None
+        self._stream: Optional[tuple] = None
+        self._cache: Optional[tuple] = None
+        self._inflight: Optional[tuple] = None
+        self._prefetch_task: Optional[asyncio.Task] = None
+        self._autoplay_next: Optional[Track] = None
+        self._shuffle_pick: Optional[Track] = None
 
     @property
     def vc(self) -> Optional[discord.VoiceClient]:
@@ -99,15 +106,16 @@ class GuildPlayer:
 
     async def seek(self, seconds: float):
         async with self._lock:
-            track = self.current
+            track, stream = self.current, self._stream
             self._halt()
-            if not await self._start(track, max(0.0, seconds)):
+            if not await self._start(track, max(0.0, seconds), stream):
                 await self._advance()
 
     async def stop(self):
         async with self._lock:
             self.queue.clear()
             self._halt()
+            self._cache = self._inflight = self._autoplay_next = self._shuffle_pick = None
 
     async def destroy(self):
         await self.stop()
@@ -143,9 +151,10 @@ class GuildPlayer:
         settings = await self.cog.config.guild(self.guild).all()
         while self.vc and self.vc.is_connected():
             if self.queue:
-                track = self.queue.pop(random.randrange(len(self.queue)) if settings["shuffle"] else 0)
-            elif settings["autoplay"] and (track := await self._autoplay_track()):
-                pass
+                pick = settings["shuffle"] and self.queue[0] is not self._shuffle_pick
+                track = self.queue.pop(random.randrange(len(self.queue)) if pick else 0)
+            elif settings["autoplay"] and (track := self._autoplay_next or await self._autoplay_track()):
+                self._autoplay_next = None
             else:
                 await self.send("Queue ended.")
                 if settings["dc_at_end"]:
@@ -155,14 +164,15 @@ class GuildPlayer:
                 return
 
     async def _autoplay_track(self) -> Optional[Track]:
-        seed = next((t.yt_id for t in reversed(self.history) if t.yt_id), None)
+        recent = list(self.history) + ([self.current] if self.current else [])
+        seed = next((t.yt_id for t in reversed(recent) if t.yt_id), None)
         if not seed:
             return None
         try:
             mix = await self.cog.ytdl.mix(seed)
         except ExtractError:
             return None
-        played = {t.yt_id for t in self.history}
+        played = {t.yt_id for t in recent}
         options = [t for t in mix if t.yt_id not in played][:10]
         if not options:
             return None
@@ -170,10 +180,53 @@ class GuildPlayer:
         track.requester = self.cog.bot.user.id
         return track
 
-    async def _start(self, track: Track, offset: float) -> bool:
+    def schedule_prefetch(self):
+        if self.current and not (self._prefetch_task and not self._prefetch_task.done()):
+            self._prefetch_task = asyncio.create_task(self._prefetch())
+
+    async def _peek_next(self) -> Optional[Track]:
+        settings = await self.cog.config.guild(self.guild).all()
+        if self.queue:
+            if settings["shuffle"] and self.queue[0] is not self._shuffle_pick:
+                self.queue.insert(0, self.queue.pop(random.randrange(len(self.queue))))
+                self._shuffle_pick = self.queue[0]
+            return self.queue[0]
+        if settings["autoplay"]:
+            if not self._autoplay_next:
+                self._autoplay_next = await self._autoplay_track()
+            return self._autoplay_next
+        return None
+
+    async def _prefetch(self):
+        while self.current:
+            track = await self._peek_next()
+            if track is None or (self._cache and self._cache[0] is track):
+                return
+            future = asyncio.ensure_future(self.cog.ytdl.stream(track))
+            self._inflight = (track, future)
+            try:
+                url, headers = await future
+            except ExtractError:
+                return
+            finally:
+                self._inflight = None
+            self._cache = (track, url, headers, time.monotonic())
+
+    async def _resolve(self, track: Track) -> Tuple[str, dict]:
+        cache, self._cache = self._cache, None
+        if cache and cache[0] is track and time.monotonic() - cache[3] < STREAM_TTL:
+            return cache[1], cache[2]
+        if self._inflight and self._inflight[0] is track:
+            return await asyncio.shield(self._inflight[1])
+        return await self.cog.ytdl.stream(track)
+
+    async def _start(self, track: Track, offset: float, stream: Optional[tuple] = None) -> bool:
         maxlength = await self.cog.config.guild(self.guild).maxlength()
         try:
-            url, headers = await self.cog.ytdl.stream(track)
+            if stream and time.monotonic() - stream[2] < STREAM_TTL:
+                url, headers = stream[0], stream[1]
+            else:
+                url, headers = await self._resolve(track)
         except ExtractError as e:
             await self.send(f"Couldn't play **{discord.utils.escape_markdown(track.title)}**: {e}")
             return False
@@ -195,7 +248,11 @@ class GuildPlayer:
         gen = self._gen
         self.current, self.votes = track, set()
         self._started, self._offset, self._paused_at = time.monotonic(), offset, None
+        self._stream = (url, headers, stream[2] if stream else time.monotonic())
+        if self._shuffle_pick is track:
+            self._shuffle_pick = None
         vc.play(source, after=lambda e: self._after(gen, e))
+        self.schedule_prefetch()
         if not offset and await self.cog.config.guild(self.guild).notify():
             await self.send(embed=await self.cog.now_embed(self, title="Now Playing"))
         return True

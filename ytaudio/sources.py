@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import time
+import urllib.parse
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -66,6 +67,10 @@ def detect_js_runtime() -> Optional[str]:
         if path.exists():
             return f"{path.name}:{path}"
     return None
+
+
+def _norm(text: Optional[str]) -> str:
+    return re.sub(r"[\W_]+", "", (text or "").casefold())
 
 
 def _entry_to_track(e: dict, requester: int) -> Optional[Track]:
@@ -138,16 +143,35 @@ class YTDL:
                               f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}")
         return [t for e in data.get("entries") or [] if (t := _entry_to_track(e, 0))]
 
+    async def ytm_album(self, name: str, artist: str, requester: int) -> List[Track]:
+        q = urllib.parse.quote_plus(f"{name} {artist}")
+        data = await self.run("--flat-playlist", "--playlist-end", "2", f"https://music.youtube.com/search?q={q}#albums")
+        for e in data.get("entries") or []:
+            album = await self.run("--flat-playlist", "--playlist-end", str(MAX_PLAYLIST), e["url"])
+            if _norm(re.sub(r"^\w+ - ", "", album.get("title") or "")) == _norm(name):
+                return [t for x in album.get("entries") or [] if (t := _entry_to_track(x, requester))]
+        return []
+
+    async def _match(self, track: Track) -> dict:
+        q = urllib.parse.quote_plus(f"{track.title} {track.author.split(', ')[0]}")
+        try:
+            data = await self.run("--flat-playlist", "--playlist-end", "5", f"https://music.youtube.com/search?q={q}#songs")
+            for e in data.get("entries") or []:
+                if _norm(e.get("title")) == _norm(track.title):
+                    return e
+        except ExtractError:
+            pass
+        data = await self.run("--flat-playlist", track.url)
+        cands = [e for e in data.get("entries") or [] if e.get("title") not in UNAVAILABLE]
+        if not cands:
+            raise ExtractError(f"No YouTube match for {track.title}.")
+        if track.duration:
+            return next((e for e in cands if e.get("duration") and abs(e["duration"] - track.duration) <= 7), cands[0])
+        return cands[0]
+
     async def stream(self, track: Track) -> Tuple[str, dict]:
         if track.lazy:
-            data = await self.run("--flat-playlist", track.url)
-            cands = [e for e in data.get("entries") or [] if e.get("title") not in UNAVAILABLE]
-            if not cands:
-                raise ExtractError(f"No YouTube match for {track.title}.")
-            best = cands[0]
-            if track.duration:
-                best = next((e for e in cands if e.get("duration") and abs(e["duration"] - track.duration) <= 7), best)
-            match = _entry_to_track(best, track.requester)
+            match = _entry_to_track(await self._match(track), track.requester)
             track.url, track.thumbnail = match.url, track.thumbnail or match.thumbnail
         data = await self.run("-f", "bestaudio/best", "--no-playlist", track.url)
         track.duration = track.duration or data.get("duration")

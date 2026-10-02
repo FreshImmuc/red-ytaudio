@@ -16,9 +16,9 @@ To go back to Red's Audio: `[p]unload ytaudio`, `[p]load audio`.
 ## What it plays
 - YouTube, YouTube Music, SoundCloud and most sites yt-dlp supports
 - Links to videos and playlists, or just type a song name
-- Spotify tracks, albums and playlists. The song is looked up on YouTube Music and played from there. Spotify playlists are limited to 100 tracks.
+- Spotify tracks, albums and playlists. The song is looked up on YouTube Music and played from there. Albums load in full if YouTube Music has them, playlists are limited to 100 tracks.
 
-Some audiobooks are only on YouTube Music Premium and can't be played.
+Some audiobooks are only on YouTube Music Premium and can't be played. The bot tells you right away instead of queueing them.
 
 ## Commands
 ```
@@ -43,6 +43,11 @@ summon                move the bot to your channel
 dc                    leave
 percent               who queued how much
 ```
+
+Good to know:
+- The next song is loaded while the current one plays, so skipping is instant.
+- If 3 songs in a row can't be played, the bot stops and clears the queue.
+- On first use after installing, the bot says it's setting up and then plays your song by itself.
 
 ## Playlists
 Saved per server. Anyone can create and start them, only the creator or a mod can change them.

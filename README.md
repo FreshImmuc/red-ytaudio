@@ -10,6 +10,8 @@ Music cog for Red-DiscordBot. Uses yt-dlp instead of Lavalink.
 [p]unload audio
 [p]load ytaudio
 ```
+`unload audio` turns off Red's built-in Audio cog. It uses the same command names, so it has to be off for ytaudio to load. Skip it if Audio isn't loaded.
+
 Everything else installs itself on first load: yt-dlp, deno, voice libraries, and FFmpeg if the system has none. The bot owner gets a DM when it's done or if something needs fixing.
 
 To go back to Red's Audio: `[p]unload ytaudio`, `[p]load audio`.

@@ -5,7 +5,7 @@
     "name": "YTAudio",
     "short": "Music via yt-dlp: YouTube, Spotify links, SoundCloud and more.",
     "description": "Replacement for Red's Audio cog that plays through yt-dlp and FFmpeg instead of Lavalink. yt-dlp is installed into the cog's data folder on first load and updated daily.",
-    "install_msg": "Run `[p]unload audio` and `[p]load ytaudio`. Setup runs by itself, the bot owner gets a DM when it's ready.",
+    "install_msg": "ytaudio uses the same commands as Red's built-in Audio cog (play, skip, queue...), so both can't be loaded at once. If Audio is loaded, run `[p]unload audio` first, then `[p]load ytaudio`. Your Audio settings are kept, `[p]load audio` brings it back anytime. Setup runs by itself on first load, the bot owner gets a DM when it's ready.",
     "requirements": [
         "PyNaCl>=1.5,<1.6",
         "davey>=0.1.0"

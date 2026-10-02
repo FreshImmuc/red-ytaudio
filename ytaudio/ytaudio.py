@@ -173,10 +173,13 @@ class YTAudio(commands.Cog):
             tracks, title = await self.spotify.load(self.session, m.group(1), m.group(2), requester)
             if m.group(1) == "album" and tracks and title:
                 try:
-                    if album := await self.ytdl.ytm_album(title, tracks[0].author.split(", ")[0], requester):
-                        return album, title
+                    tracks = await self.ytdl.ytm_album(title, tracks[0].author.split(", ")[0], requester) or tracks
                 except ExtractError:
                     pass
+                try:
+                    await self.ytdl.stream(tracks[0])
+                except ExtractError as e:
+                    raise Feedback(f"Can't play **{esc(title)}**: {e}")
             return tracks, title
         return await self.ytdl.load(query, requester)
 

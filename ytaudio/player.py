@@ -149,6 +149,7 @@ class GuildPlayer:
 
     async def _advance(self):
         settings = await self.cog.config.guild(self.guild).all()
+        failures = 0
         while self.vc and self.vc.is_connected():
             if self.queue:
                 pick = settings["shuffle"] and self.queue[0] is not self._shuffle_pick
@@ -160,7 +161,13 @@ class GuildPlayer:
                 if settings["dc_at_end"]:
                     await self.vc.disconnect(force=True)
                 return
-            if await self._start(track, 0.0):
+            if await self._start(track, 0.0, quiet=failures > 0):
+                return
+            failures += 1
+            if failures >= 3:
+                self.queue.clear()
+                self._autoplay_next = self._shuffle_pick = None
+                await self.send("Stopped: 3 tracks in a row couldn't be played, so I cleared the queue.")
                 return
 
     async def _autoplay_track(self) -> Optional[Track]:
@@ -220,7 +227,7 @@ class GuildPlayer:
             return await asyncio.shield(self._inflight[1])
         return await self.cog.ytdl.stream(track)
 
-    async def _start(self, track: Track, offset: float, stream: Optional[tuple] = None) -> bool:
+    async def _start(self, track: Track, offset: float, stream: Optional[tuple] = None, quiet: bool = False) -> bool:
         maxlength = await self.cog.config.guild(self.guild).maxlength()
         try:
             if stream and time.monotonic() - stream[2] < STREAM_TTL:
@@ -228,10 +235,12 @@ class GuildPlayer:
             else:
                 url, headers = await self._resolve(track)
         except ExtractError as e:
-            await self.send(f"Couldn't play **{discord.utils.escape_markdown(track.title)}**: {e}")
+            if not quiet:
+                await self.send(f"Couldn't play **{discord.utils.escape_markdown(track.title)}**: {e}")
             return False
         if maxlength and track.duration and track.duration > maxlength:
-            await self.send(f"Skipped **{discord.utils.escape_markdown(track.title)}**: longer than {fmt_time(maxlength)}.")
+            if not quiet:
+                await self.send(f"Skipped **{discord.utils.escape_markdown(track.title)}**: longer than {fmt_time(maxlength)}.")
             return False
         vc = self.vc
         if not vc or not vc.is_connected():

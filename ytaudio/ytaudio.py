@@ -215,8 +215,9 @@ class YTAudio(commands.Cog):
             return embed
         embed.description = track_line(t)
         if t.duration:
-            done = int(player.position / t.duration * 20)
-            embed.description += f"\n`{fmt_time(player.position)}` {'▬' * done}🔘{'▬' * (20 - done)} `{fmt_time(t.duration)}`"
+            done = min(20, int(player.position / t.duration * 20))
+            played = f"[{'▬' * done}]({t.link})" if done and t.link else "▬" * done
+            embed.description += f"\n`{fmt_time(player.position)}` {played}🔘{'▬' * (20 - done)} `{fmt_time(t.duration)}`"
         if t.thumbnail:
             embed.set_thumbnail(url=t.thumbnail)
         requester = player.guild.get_member(t.requester)

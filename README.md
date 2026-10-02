@@ -26,6 +26,7 @@ Some audiobooks are only on YouTube Music Premium and can't be played. The bot t
 ## Commands
 ```
 play <url|search>     play or queue something
+play                  resume when paused
 bumpplay <url|search> queue it next
 search <text>         pick from 10 results (sc <text> for soundcloud)
 skip [n]              skip, or jump to queue position n

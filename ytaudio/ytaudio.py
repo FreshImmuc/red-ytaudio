@@ -222,6 +222,12 @@ class YTAudio(commands.Cog):
         s = await self.config.guild(player.guild).all()
         flags = [n for n, on in (("Repeat", s["repeat"]), ("Shuffle", s["shuffle"]), ("Autoplay", s["autoplay"]),
                                  ("Paused", player.paused)) if on]
+        if t.requester == self.bot.user.id:
+            prefixes = [p for p in await self.bot.get_valid_prefixes(player.guild) if not p.startswith("<@")]
+            embed.set_footer(text=f"Picked by autoplay. Turn it off with {prefixes[0] if prefixes else ''}autoplay"
+                             + f" | {len(player.queue)} in queue | Volume {player.volume}%"
+                             + "".join(f" | {f}" for f in flags if f != "Autoplay"))
+            return embed
         embed.set_footer(text=(f"Requested by {requester.display_name} | " if requester else "")
                          + f"{len(player.queue)} in queue | Volume {player.volume}%"
                          + (f" | {', '.join(flags)}" if flags else ""))
@@ -259,8 +265,17 @@ class YTAudio(commands.Cog):
             self.players.pop(player.guild.id, None)
 
     @commands.command()
-    async def play(self, ctx: commands.Context, *, query: str):
-        """Play a URL (YouTube, Spotify, SoundCloud, ...) or search YouTube."""
+    async def play(self, ctx: commands.Context, *, query: Optional[str] = None):
+        """Play a URL (YouTube, Spotify, SoundCloud, ...) or search YouTube. Without a query it resumes playback."""
+        if query is None:
+            player = self.players.get(ctx.guild.id)
+            if not player or not player.current:
+                return await ctx.send_help()
+            player = await self.control(ctx)
+            if not player.paused:
+                raise Feedback("Already playing.")
+            player.resume()
+            return await ctx.send("Resumed.")
         if not await self.is_dj(ctx):
             raise Feedback("You need the DJ role to queue tracks.")
         player = await self.connect(ctx)

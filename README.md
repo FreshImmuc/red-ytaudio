@@ -4,8 +4,9 @@ Music cog for Red-DiscordBot. Uses yt-dlp instead of Lavalink.
 
 ## Install
 ```
-[p]repo add ytdl-audio <repo url>
-[p]cog install ytdl-audio ytaudio
+[p]load downloader
+[p]repo add red-ytaudio https://github.com/FreshImmuc/red-ytaudio
+[p]cog install red-ytaudio ytaudio
 [p]unload audio
 [p]load ytaudio
 ```

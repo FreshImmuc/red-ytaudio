@@ -370,9 +370,11 @@ class YTAudio(commands.Cog):
 
     @commands.command()
     async def stop(self, ctx: commands.Context):
-        """Stop playback and clear the queue."""
-        await (await self.control(ctx)).stop()
-        await ctx.send("Stopped and cleared the queue.")
+        """Stop playback, clear the queue and leave the voice channel."""
+        player = await self.control(ctx)
+        await player.destroy()
+        self.players.pop(ctx.guild.id, None)
+        await ctx.send("Stopped, cleared the queue and left the channel.")
 
     @commands.command(aliases=["dc"])
     async def disconnect(self, ctx: commands.Context):
